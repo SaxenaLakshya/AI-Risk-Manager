@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+    --ink: #0b0f14;
+    --surface: #131920;
+    --surface-raised: #1a222b;
+    --line: #232c36;
+    --text: #e8ecef;
+    --text-muted: #7c8792;
+    --amber: #e8a33d;
+    --amber-dim: #4d3d20;
+    --risk-red: #d94f4f;
+    --trust-green: #4fa57a;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--font-body), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+    font-family: var(--font-display), sans-serif;
+}
+
+.font-mono {
+    font-family: var(--font-mono), monospace;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
+
+@keyframes pulse-travel {
+    0% {
+        left: 0%;
+        opacity: 0;
+    }
+
+    8% {
+        opacity: 1;
+    }
+
+    92% {
+        opacity: 1;
+    }
+
+    100% {
+        left: 100%;
+        opacity: 0;
+    }
+}
+
+.pulse-dot {
+    animation: pulse-travel 4.5s ease-in-out infinite;
+}

@@ -10,7 +10,6 @@ from groq import Groq
 load_dotenv()
 
 GROQ_MODEL = "openai/gpt-oss-20b"  # swap to "openai/gpt-oss-120b" if you need stronger reasoning
-# Note: llama-3.1-8b-instant and llama-3.3-70b-versatile were deprecated by Groq.
 # Check https://console.groq.com/docs/models for the current list if this changes again.
 
 
