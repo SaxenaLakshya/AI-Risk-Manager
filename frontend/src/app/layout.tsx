@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
+import Nav from "@/components/Nav";
 import "./globals.css";
 
 const display = Space_Grotesk({
@@ -22,7 +23,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
     title: "Risk/OS — Return-Risk Scorer",
-    description: "Order-level return and abuse risk scoring for merchants.",
+    description: "The operating system for merchant return-risk decisions.",
 };
 
 export default function RootLayout({
@@ -30,7 +31,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
     return (
         <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
-            <body>{children}</body>
+            <body suppressHydrationWarning>
+                <Nav />
+                {children}
+            </body>
         </html>
     );
 }

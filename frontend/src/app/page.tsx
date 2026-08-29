@@ -38,22 +38,12 @@ function chipClasses(tone: "trust" | "amber" | "risk") {
 export default function Home() {
     return (
         <main className="min-h-screen">
-            {/* Status bar */}
-            <div className="border-b border-[color:var(--line)] px-6 py-3 flex items-center justify-between">
-                <span className="font-mono text-xs tracking-widest text-[color:var(--text-muted)] uppercase">
-                    Risk/OS
-                </span>
-                <div className="flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[color:var(--trust-green)]" />
-                    <span className="font-mono text-xs text-[color:var(--text-muted)]">
-                        pipeline live
-                    </span>
-                </div>
-            </div>
-
             {/* Hero */}
             <section className="px-6 pt-16 pb-12 max-w-4xl">
-                <h1 className="font-display text-4xl md:text-5xl font-medium leading-tight text-[color:var(--text)]">
+                <span className="font-mono text-xs tracking-widest text-[color:var(--amber)] uppercase">
+                    Risk/OS
+                </span>
+                <h1 className="font-display text-4xl md:text-5xl font-medium leading-tight text-[color:var(--text)] mt-3">
                     Return-risk scoring
                     <br />
                     for merchants who&apos;d rather ask twice

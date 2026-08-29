@@ -406,6 +406,12 @@ def sync_metrics():
         """)).mappings().all()
 
     total = len(rows)
+
+    CLASS_ORDER = ["Legitimate", "Policy Abuser", "Fraudulent Return", "Wardrobing"]
+    class_index = {c: i for i, c in enumerate(CLASS_ORDER)}
+    # rows = model's predicted class, cols = vendor's verified label
+    vendor_confusion_matrix = [[0 for _ in CLASS_ORDER] for _ in CLASS_ORDER]
+
     if total == 0:
         return {
             "has_data": False,
@@ -414,6 +420,8 @@ def sync_metrics():
             "action_agreement_pct": None,
             "action_agreement_count": 0,
             "breakdown": [],
+            "class_order": CLASS_ORDER,
+            "vendor_confusion_matrix": vendor_confusion_matrix,
         }
 
     classification_matches = 0
@@ -424,7 +432,10 @@ def sync_metrics():
     rec_to_decision = {"approve": "approved", "reject": "rejected"}
 
     for r in rows:
-        if r["model_predicted_class"] == r["verified_abuse_type"]:
+        model_cls = r["model_predicted_class"]
+        vendor_cls = r["verified_abuse_type"]
+
+        if model_cls == vendor_cls:
             classification_matches += 1
 
         rec = (r["model_recommendation"] or "").lower()
@@ -433,8 +444,13 @@ def sync_metrics():
             if rec_to_decision[rec] == r["vendor_decision"]:
                 action_matches += 1
 
-        key = (r["model_predicted_class"], r["verified_abuse_type"])
+        key = (model_cls, vendor_cls)
         breakdown_counts[key] = breakdown_counts.get(key, 0) + 1
+
+        # Fill the fixed-order grid; skip gracefully if a class name doesn't match
+        # the known set (e.g. legacy rows or a typo'd label)
+        if model_cls in class_index and vendor_cls in class_index:
+            vendor_confusion_matrix[class_index[model_cls]][class_index[vendor_cls]] += 1
 
     breakdown = [
         {"model_predicted_class": k[0], "vendor_verified": k[1], "count": v}
@@ -448,4 +464,6 @@ def sync_metrics():
         "action_agreement_pct": round(100 * action_matches / action_comparable, 1) if action_comparable else None,
         "action_agreement_count": action_comparable,
         "breakdown": breakdown,
+        "class_order": CLASS_ORDER,
+        "vendor_confusion_matrix": vendor_confusion_matrix,
     }

@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getSyncMetrics, type SyncMetrics } from "@/lib/api";
+import { useRequireVendorAuth } from "@/lib/auth";
 
 // --- REAL numbers, from your ensemble (XGBoost + AdaBoost) classification_report ---
 const CLASS_METRICS = [
@@ -35,6 +35,8 @@ function pct(n: number) {
 }
 
 export default function PerformancePage() {
+    const { checked, authed } = useRequireVendorAuth();
+
     const [sync, setSync] = useState<SyncMetrics | null>(null);
     const [syncError, setSyncError] = useState<string | null>(null);
     const [syncLoading, setSyncLoading] = useState(true);
@@ -46,16 +48,11 @@ export default function PerformancePage() {
             .finally(() => setSyncLoading(false));
     }, []);
 
+    if (!checked || !authed) return null;
+
     return (
         <main className="min-h-screen px-6 py-10 max-w-5xl mx-auto">
-            <Link
-                href="/"
-                className="font-mono text-xs text-[color:var(--text-muted)] hover:text-[color:var(--amber)]"
-            >
-                ← back
-            </Link>
-
-            <h1 className="font-display text-3xl font-medium mt-4 mb-1">
+            <h1 className="font-display text-3xl font-medium mb-1">
                 Model performance
             </h1>
             <p className="text-sm text-[color:var(--text-muted)] mb-10">
@@ -206,6 +203,18 @@ export default function PerformancePage() {
                                 value={String(sync.total_decisions)}
                             />
                         </div>
+
+                        {sync.vendor_confusion_matrix && (
+                            <div className="mb-6">
+                                <p className="font-mono text-[10px] uppercase tracking-wider text-[color:var(--text-muted)] mb-2">
+                                    Rows = model predicted, columns = vendor verified
+                                </p>
+                                <ConfusionGrid
+                                    matrix={sync.vendor_confusion_matrix}
+                                    labels={sync.class_order}
+                                />
+                            </div>
+                        )}
 
                         <div className="border border-[color:var(--line)] rounded-lg overflow-hidden">
                             <table className="w-full text-sm">

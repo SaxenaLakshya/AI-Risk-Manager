@@ -108,6 +108,8 @@ export type SyncMetrics = {
     action_agreement_pct: number | null;
     action_agreement_count: number;
     breakdown: { model_predicted_class: string; vendor_verified: string; count: number }[];
+    class_order: string[];
+    vendor_confusion_matrix: number[][] | null;
 };
 
 export async function getSyncMetrics(): Promise<SyncMetrics> {

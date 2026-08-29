@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import {
     scoreOrder,
     submitVendorDecision,
     type OrderInput,
     type ScoreResponse,
 } from "@/lib/api";
+import { useRequireVendorAuth } from "@/lib/auth";
 
 const ABUSE_TYPES = ["Legitimate", "Policy Abuser", "Fraudulent Return", "Wardrobing"];
 
@@ -17,66 +17,9 @@ type IncomingRequest = OrderInput & {
     days_to_return: number;
 };
 
-// Simulated "requests that just arrived" -- swap for a real incoming-orders
-// feed later. These reuse cases already validated earlier in the pipeline.
-const INCOMING_REQUESTS: IncomingRequest[] = [
-    {
-        order_id: "ORD-DEMO-001",
-        order_date: "2026-08-20",
-        days_to_return: 4,
-        customer_id: "CUST00004",
-        age: 25, account_age_days: 407, customer_segment: "Gold",
-        platform: "Web Browser", device_type: "Windows PC", payment_method: "Crypto",
-        product_category: "Jewelry", avg_order_value_usd: 180.0, refund_amount_requested_usd: 180.0,
-        is_high_value_item: 0, discount_used: 0, item_returned_opened: 1,
-        return_packaging_intact: 0, photo_evidence_provided: 0, tracking_number_valid: 1,
-        shipping_carrier: "USPS", address_change_before_delivery: 0, refund_to_different_account: 0,
-        multiple_accounts_flag: 0, customer_support_contacts: 15, previous_dispute_count: 6,
-        wishlist_to_cart_time_hrs: 2.0, return_reason: "Not as described",
-    },
-    {
-        order_id: "ORD-DEMO-002",
-        order_date: "2026-08-22",
-        days_to_return: 2,
-        customer_id: "CUST00004",
-        age: 29, account_age_days: 300, customer_segment: "Bronze",
-        platform: "Mobile App", device_type: "iPhone", payment_method: "Credit Card",
-        product_category: "Clothing", avg_order_value_usd: 210.0, refund_amount_requested_usd: 210.0,
-        is_high_value_item: 0, discount_used: 0, item_returned_opened: 1,
-        return_packaging_intact: 1, photo_evidence_provided: 0, tracking_number_valid: 1,
-        shipping_carrier: "USPS", address_change_before_delivery: 0, refund_to_different_account: 0,
-        multiple_accounts_flag: 0, customer_support_contacts: 0, previous_dispute_count: 0,
-        wishlist_to_cart_time_hrs: 3.0, return_reason: "Changed mind",
-    },
-    {
-        order_id: "ORD-DEMO-003",
-        order_date: "2026-08-24",
-        days_to_return: 1,
-        customer_id: "CUST88888",
-        age: 20, account_age_days: 2, customer_segment: "New",
-        platform: "Mobile App", device_type: "Android", payment_method: "Crypto",
-        product_category: "Electronics", avg_order_value_usd: 1350.0, refund_amount_requested_usd: 1350.0,
-        is_high_value_item: 1, discount_used: 1, item_returned_opened: 1,
-        return_packaging_intact: 0, photo_evidence_provided: 0, tracking_number_valid: 0,
-        shipping_carrier: "OnTrac", address_change_before_delivery: 1, refund_to_different_account: 1,
-        multiple_accounts_flag: 1, customer_support_contacts: 6, previous_dispute_count: 3,
-        wishlist_to_cart_time_hrs: 0.1, return_reason: "Item defective",
-    },
-    {
-        order_id: "ORD-DEMO-004",
-        order_date: "2026-08-25",
-        days_to_return: 6,
-        customer_id: "CUST00003",
-        age: 33, account_age_days: 250, customer_segment: "Silver",
-        platform: "Web Browser", device_type: "Windows PC", payment_method: "Buy Now Pay Later",
-        product_category: "Electronics", avg_order_value_usd: 420.0, refund_amount_requested_usd: 420.0,
-        is_high_value_item: 1, discount_used: 0, item_returned_opened: 1,
-        return_packaging_intact: 1, photo_evidence_provided: 0, tracking_number_valid: 1,
-        shipping_carrier: "UPS", address_change_before_delivery: 0, refund_to_different_account: 0,
-        multiple_accounts_flag: 0, customer_support_contacts: 1, previous_dispute_count: 0,
-        wishlist_to_cart_time_hrs: 15.0, return_reason: "Not as described",
-    },
-];
+// Incoming requests -- currently empty. Wire this up to a real pending-requests
+// feed (see note below) once /submit-request writes to shared storage.
+const INCOMING_REQUESTS: IncomingRequest[] = [];
 
 type QueueItem = {
     request: IncomingRequest;
@@ -103,6 +46,8 @@ function toneColor(tone: "trust" | "amber" | "risk") {
 }
 
 export default function QueuePage() {
+    const { checked, authed } = useRequireVendorAuth();
+
     const [items, setItems] = useState<QueueItem[]>(
         INCOMING_REQUESTS.map((r) => ({
             request: r,
@@ -200,16 +145,11 @@ export default function QueuePage() {
     const pending = items.filter((i) => !i.decided);
     const decided = items.filter((i) => i.decided);
 
+    if (!checked || !authed) return null;
+
     return (
         <main className="min-h-screen px-6 py-10 max-w-4xl mx-auto">
-            <Link
-                href="/"
-                className="font-mono text-xs text-[color:var(--text-muted)] hover:text-[color:var(--amber)]"
-            >
-                ← back
-            </Link>
-
-            <h1 className="font-display text-3xl font-medium mt-4 mb-1">Review queue</h1>
+            <h1 className="font-display text-3xl font-medium mb-1">Review queue</h1>
             <p className="text-sm text-[color:var(--text-muted)] mb-10">
                 {pending.length} pending · {decided.length} decided this session
             </p>
