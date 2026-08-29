@@ -27,9 +27,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from dotenv import load_dotenv
 
-from get_history import get_customer_history
+from get_history import get_customer_history, engine
 from slm_review import get_slm_feedback
 from confident_summary import build_confident_summary
+from sqlalchemy import text
+import uuid
+from datetime import datetime, date
 
 load_dotenv()
 
@@ -48,7 +51,15 @@ label_map = joblib.load(os.path.join(ARTIFACT_DIR, "label_map.pkl"))
 
 UNCERTAIN_THRESHOLD = 0.60
 
-app = FastAPI(title="Return-Risk Scorer API", version="1.1")
+app = FastAPI(title="Return-Risk Scorer API", version="1.2")
+
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # add your deployed frontend URL here too
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +216,236 @@ def health():
 @app.post("/score-order", response_model=ScoreResponse)
 def score_order_endpoint(order: OrderInput):
     return score_order(order)
+
+
+# ---------------------------------------------------------------------------
+# Vendor decision -- closes the feedback loop by writing the outcome
+# back into the historical database (customers/orders/returns).
+# ---------------------------------------------------------------------------
+VALID_ABUSE_TYPES = {"Legitimate", "Policy Abuser", "Fraudulent Return", "Wardrobing"}
+VALID_DECISIONS = {"approved", "rejected"}
+
+ORDER_DEFAULTS = dict(
+    platform="Web Browser", device_type="Windows PC", payment_method="Credit Card",
+    is_high_value_item=0, discount_used=0, shipping_carrier="USPS",
+    tracking_number_valid=1, address_change_before_delivery=0,
+)
+CUSTOMER_DEFAULTS = dict(
+    age=30, account_age_days=30, customer_segment="New", country="IN",
+    multiple_accounts_flag=0, customer_support_contacts=0,
+)
+
+
+class VendorDecisionInput(BaseModel):
+    order_id: str
+    customer_id: str
+    order_date: str  # "YYYY-MM-DD"
+    product_category: str
+    order_amount: float
+    return_reason: Optional[str] = "Not specified"
+    days_to_return: Optional[int] = 0
+    item_returned_opened: int = Field(ge=0, le=1)
+    return_packaging_intact: int = Field(ge=0, le=1)
+    photo_evidence_provided: int = Field(ge=0, le=1)
+    refund_to_different_account: int = Field(ge=0, le=1)
+    vendor_decision: str  # "approved" | "rejected"
+    verified_abuse_type: str  # one of VALID_ABUSE_TYPES
+
+    # What the model/SLM said at scoring time -- needed to measure sync with the vendor
+    model_predicted_class: Optional[str] = None
+    model_confidence: Optional[float] = None
+    model_recommendation: Optional[str] = None  # "approve" | "reject" | "request more info"
+
+    # Optional: only needed if this customer/order isn't already in the DB
+    age: Optional[int] = None
+    account_age_days: Optional[int] = None
+    customer_segment: Optional[str] = None
+    payment_method: Optional[str] = None
+    platform: Optional[str] = None
+    device_type: Optional[str] = None
+    shipping_carrier: Optional[str] = None
+    is_high_value_item: Optional[int] = None
+    discount_used: Optional[int] = None
+    tracking_number_valid: Optional[int] = None
+    address_change_before_delivery: Optional[int] = None
+    multiple_accounts_flag: Optional[int] = None
+    customer_support_contacts: Optional[int] = None
+
+
+class VendorDecisionResponse(BaseModel):
+    status: str
+    return_id: str
+
+
+@app.post("/vendor-decision", response_model=VendorDecisionResponse)
+def vendor_decision_endpoint(payload: VendorDecisionInput):
+    if payload.vendor_decision not in VALID_DECISIONS:
+        raise HTTPException(status_code=400, detail=f"vendor_decision must be one of {VALID_DECISIONS}")
+    if payload.verified_abuse_type not in VALID_ABUSE_TYPES:
+        raise HTTPException(status_code=400, detail=f"verified_abuse_type must be one of {VALID_ABUSE_TYPES}")
+
+    try:
+        with engine.begin() as conn:
+            # 1. Ensure the customer exists (insert with defaults/provided values if new)
+            existing_customer = conn.execute(
+                text("SELECT 1 FROM customers WHERE customer_id = :cid"),
+                {"cid": payload.customer_id}
+            ).fetchone()
+
+            if not existing_customer:
+                conn.execute(text("""
+                    INSERT INTO customers
+                        (customer_id, age, account_age_days, customer_segment,
+                         country, multiple_accounts_flag, customer_support_contacts)
+                    VALUES
+                        (:customer_id, :age, :account_age_days, :customer_segment,
+                         :country, :multiple_accounts_flag, :customer_support_contacts)
+                """), {
+                    "customer_id": payload.customer_id,
+                    "age": payload.age or CUSTOMER_DEFAULTS["age"],
+                    "account_age_days": payload.account_age_days or CUSTOMER_DEFAULTS["account_age_days"],
+                    "customer_segment": payload.customer_segment or CUSTOMER_DEFAULTS["customer_segment"],
+                    "country": CUSTOMER_DEFAULTS["country"],
+                    "multiple_accounts_flag": payload.multiple_accounts_flag or 0,
+                    "customer_support_contacts": payload.customer_support_contacts or 0,
+                })
+
+            # 2. Ensure the order exists (insert with defaults/provided values if new)
+            existing_order = conn.execute(
+                text("SELECT 1 FROM orders WHERE order_id = :oid"),
+                {"oid": payload.order_id}
+            ).fetchone()
+
+            if not existing_order:
+                conn.execute(text("""
+                    INSERT INTO orders
+                        (order_id, customer_id, order_date, product_category, order_amount,
+                         discount_used, is_high_value_item, platform, device_type,
+                         payment_method, shipping_carrier, tracking_number_valid,
+                         address_change_before_delivery)
+                    VALUES
+                        (:order_id, :customer_id, :order_date, :product_category, :order_amount,
+                         :discount_used, :is_high_value_item, :platform, :device_type,
+                         :payment_method, :shipping_carrier, :tracking_number_valid,
+                         :address_change_before_delivery)
+                """), {
+                    "order_id": payload.order_id,
+                    "customer_id": payload.customer_id,
+                    "order_date": payload.order_date,
+                    "product_category": payload.product_category,
+                    "order_amount": payload.order_amount,
+                    "discount_used": payload.discount_used or 0,
+                    "is_high_value_item": payload.is_high_value_item or 0,
+                    "platform": payload.platform or ORDER_DEFAULTS["platform"],
+                    "device_type": payload.device_type or ORDER_DEFAULTS["device_type"],
+                    "payment_method": payload.payment_method or ORDER_DEFAULTS["payment_method"],
+                    "shipping_carrier": payload.shipping_carrier or ORDER_DEFAULTS["shipping_carrier"],
+                    "tracking_number_valid": payload.tracking_number_valid
+                        if payload.tracking_number_valid is not None else ORDER_DEFAULTS["tracking_number_valid"],
+                    "address_change_before_delivery": payload.address_change_before_delivery or 0,
+                })
+
+            # 3. Insert the return record with the vendor's final decision -- this is
+            #    the actual feedback-loop write that future get_customer_history() calls will see
+            return_id = f"RET{uuid.uuid4().hex[:8].upper()}"
+            conn.execute(text("""
+                INSERT INTO returns
+                    (return_id, order_id, customer_id, return_date, days_to_return,
+                     return_reason, refund_amount, item_returned_opened,
+                     return_packaging_intact, photo_evidence_provided,
+                     refund_to_different_account, vendor_decision, verified_abuse_type,
+                     decision_timestamp, model_predicted_class, model_confidence,
+                     model_recommendation)
+                VALUES
+                    (:return_id, :order_id, :customer_id, :return_date, :days_to_return,
+                     :return_reason, :refund_amount, :item_returned_opened,
+                     :return_packaging_intact, :photo_evidence_provided,
+                     :refund_to_different_account, :vendor_decision, :verified_abuse_type,
+                     :decision_timestamp, :model_predicted_class, :model_confidence,
+                     :model_recommendation)
+            """), {
+                "return_id": return_id,
+                "order_id": payload.order_id,
+                "customer_id": payload.customer_id,
+                "return_date": date.today().isoformat(),
+                "days_to_return": payload.days_to_return or 0,
+                "return_reason": payload.return_reason,
+                "refund_amount": payload.order_amount,
+                "item_returned_opened": payload.item_returned_opened,
+                "return_packaging_intact": payload.return_packaging_intact,
+                "photo_evidence_provided": payload.photo_evidence_provided,
+                "refund_to_different_account": payload.refund_to_different_account,
+                "vendor_decision": payload.vendor_decision,
+                "verified_abuse_type": payload.verified_abuse_type,
+                "decision_timestamp": datetime.now().isoformat(),
+                "model_predicted_class": payload.model_predicted_class,
+                "model_confidence": payload.model_confidence,
+                "model_recommendation": payload.model_recommendation,
+            })
+
+        return VendorDecisionResponse(status="recorded", return_id=return_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to record vendor decision: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Sync metrics -- how often does the model/SLM's call match what the vendor,
+# with full context, actually decided? Only counts rows where we captured
+# the model's prediction at decision time.
+# ---------------------------------------------------------------------------
+@app.get("/sync-metrics")
+def sync_metrics():
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT model_predicted_class, model_recommendation, vendor_decision, verified_abuse_type
+            FROM returns
+            WHERE model_predicted_class IS NOT NULL
+        """)).mappings().all()
+
+    total = len(rows)
+    if total == 0:
+        return {
+            "has_data": False,
+            "total_decisions": 0,
+            "classification_agreement_pct": None,
+            "action_agreement_pct": None,
+            "action_agreement_count": 0,
+            "breakdown": [],
+        }
+
+    classification_matches = 0
+    action_matches = 0
+    action_comparable = 0
+    breakdown_counts: dict = {}
+
+    rec_to_decision = {"approve": "approved", "reject": "rejected"}
+
+    for r in rows:
+        if r["model_predicted_class"] == r["verified_abuse_type"]:
+            classification_matches += 1
+
+        rec = (r["model_recommendation"] or "").lower()
+        if rec in rec_to_decision:
+            action_comparable += 1
+            if rec_to_decision[rec] == r["vendor_decision"]:
+                action_matches += 1
+
+        key = (r["model_predicted_class"], r["verified_abuse_type"])
+        breakdown_counts[key] = breakdown_counts.get(key, 0) + 1
+
+    breakdown = [
+        {"model_predicted_class": k[0], "vendor_verified": k[1], "count": v}
+        for k, v in sorted(breakdown_counts.items(), key=lambda x: -x[1])
+    ]
+
+    return {
+        "has_data": True,
+        "total_decisions": total,
+        "classification_agreement_pct": round(100 * classification_matches / total, 1),
+        "action_agreement_pct": round(100 * action_matches / action_comparable, 1) if action_comparable else None,
+        "action_agreement_count": action_comparable,
+        "breakdown": breakdown,
+    }
