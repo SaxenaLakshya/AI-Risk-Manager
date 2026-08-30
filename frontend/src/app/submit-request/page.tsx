@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { scoreOrder, type OrderInput, type ScoreResponse } from "@/lib/api";
+import { submitOrder, type OrderInput, type SubmitOrderResponse } from "@/lib/api";
 
 const CUSTOMER_SEGMENTS = ["New", "Bronze", "Silver", "Gold", "Platinum"];
 const PLATFORMS = ["Web Browser", "Tablet App", "Mobile App"];
@@ -61,14 +61,14 @@ const inputClass =
 export default function SubmitRequestPage() {
     const [form, setForm] = useState<OrderInput>(DEFAULT_FORM);
     const [submitting, setSubmitting] = useState(false);
-    const [result, setResult] = useState<ScoreResponse | null>(null);
+    const [result, setResult] = useState<SubmitOrderResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     function update<K extends keyof OrderInput>(key: K, value: OrderInput[K]) {
         setForm((prev) => ({ ...prev, [key]: value }));
     }
 
-    async function handleSubmit(e: React.FormEvent) {
+    async function handleSubmit(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!form.customer_id.trim()) {
             setError("Please enter a customer ID.");
@@ -77,7 +77,7 @@ export default function SubmitRequestPage() {
         setSubmitting(true);
         setError(null);
         try {
-            const score = await scoreOrder(form);
+            const score = await submitOrder(form);
             setResult(score);
         } catch (err) {
             setError((err as Error).message);
@@ -299,15 +299,42 @@ export default function SubmitRequestPage() {
                                 placeholder="e.g. Not as described"
                             />
                         </Field>
+                        <Field label="Customer support contacts (lifetime)">
+                            <input
+                                type="number"
+                                className={inputClass}
+                                value={form.customer_support_contacts}
+                                onChange={(e) => update("customer_support_contacts", Number(e.target.value))}
+                            />
+                        </Field>
+                        <Field label="Previous dispute count">
+                            <input
+                                type="number"
+                                className={inputClass}
+                                value={form.previous_dispute_count}
+                                onChange={(e) => update("previous_dispute_count", Number(e.target.value))}
+                            />
+                        </Field>
+                        <Field label="Wishlist to cart time (hrs)">
+                            <input
+                                type="number"
+                                className={inputClass}
+                                value={form.wishlist_to_cart_time_hrs}
+                                onChange={(e) => update("wishlist_to_cart_time_hrs", Number(e.target.value))}
+                            />
+                        </Field>
                     </div>
                     <div className="flex flex-wrap gap-5">
                         {[
+                            ["is_high_value_item", "High-value item"],
+                            ["discount_used", "Discount was used"],
                             ["item_returned_opened", "Item was opened"],
                             ["return_packaging_intact", "Packaging intact"],
                             ["photo_evidence_provided", "Photo evidence provided"],
                             ["tracking_number_valid", "Valid tracking number"],
                             ["address_change_before_delivery", "Address changed before delivery"],
                             ["refund_to_different_account", "Refund to a different account"],
+                            ["multiple_accounts_flag", "Linked to multiple accounts"],
                         ].map(([key, label]) => (
                             <label key={key} className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
                                 <input

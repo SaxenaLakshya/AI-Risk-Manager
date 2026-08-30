@@ -33,6 +33,7 @@ from confident_summary import build_confident_summary
 from sqlalchemy import text
 import uuid
 from datetime import datetime, date
+import json
 
 load_dotenv()
 
@@ -219,6 +220,79 @@ def score_order_endpoint(order: OrderInput):
 
 
 # ---------------------------------------------------------------------------
+# Public submission flow -- scores the order, and if it's uncertain, queues
+# it in pending_requests for a vendor to review. Confident cases resolve
+# immediately and are never written here (nothing for a vendor to do).
+# ---------------------------------------------------------------------------
+class SubmitOrderResponse(ScoreResponse):
+    request_id: Optional[str] = None
+    queued_for_review: bool = False
+
+
+@app.post("/submit-order", response_model=SubmitOrderResponse)
+def submit_order_endpoint(order: OrderInput):
+    score = score_order(order)
+
+    request_id = None
+    if score.is_uncertain:
+        request_id = f"REQ{uuid.uuid4().hex[:8].upper()}"
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO pending_requests
+                        (request_id, customer_id, submitted_at, order_json,
+                         predicted_class, confidence, class_probabilities,
+                         slm_rationale, slm_recommendation, slm_key_factor,
+                         explanation_source, status)
+                    VALUES
+                        (:request_id, :customer_id, :submitted_at, CAST(:order_json AS JSONB),
+                         :predicted_class, :confidence, CAST(:class_probabilities AS JSONB),
+                         :slm_rationale, :slm_recommendation, :slm_key_factor,
+                         :explanation_source, 'pending')
+                """), {
+                    "request_id": request_id,
+                    "customer_id": order.customer_id,
+                    "submitted_at": datetime.now().isoformat(),
+                    "order_json": json.dumps(order.dict()),
+                    "predicted_class": score.predicted_class,
+                    "confidence": score.confidence,
+                    "class_probabilities": json.dumps(score.class_probabilities),
+                    "slm_rationale": score.slm_rationale,
+                    "slm_recommendation": score.slm_recommendation,
+                    "slm_key_factor": score.slm_key_factor,
+                    "explanation_source": score.explanation_source,
+                })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to queue request: {str(e)}")
+
+    return SubmitOrderResponse(**score.dict(), request_id=request_id, queued_for_review=bool(request_id))
+
+
+@app.get("/pending-requests")
+def get_pending_requests():
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT request_id, customer_id, submitted_at, order_json,
+                   predicted_class, confidence, class_probabilities,
+                   slm_rationale, slm_recommendation, slm_key_factor, explanation_source
+            FROM pending_requests
+            WHERE status = 'pending'
+            ORDER BY submitted_at ASC
+        """)).mappings().all()
+
+    results = []
+    for r in rows:
+        row = dict(r)
+        # JSONB columns usually deserialize to dict already; fall back to json.loads if not
+        for key in ("order_json", "class_probabilities"):
+            if isinstance(row[key], str):
+                row[key] = json.loads(row[key])
+        row["submitted_at"] = row["submitted_at"].isoformat() if hasattr(row["submitted_at"], "isoformat") else row["submitted_at"]
+        results.append(row)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Vendor decision -- closes the feedback loop by writing the outcome
 # back into the historical database (customers/orders/returns).
 # ---------------------------------------------------------------------------
@@ -250,6 +324,8 @@ class VendorDecisionInput(BaseModel):
     refund_to_different_account: int = Field(ge=0, le=1)
     vendor_decision: str  # "approved" | "rejected"
     verified_abuse_type: str  # one of VALID_ABUSE_TYPES
+
+    request_id: Optional[str] = None  # clears this row from pending_requests once decided
 
     # What the model/SLM said at scoring time -- needed to measure sync with the vendor
     model_predicted_class: Optional[str] = None
@@ -382,6 +458,13 @@ def vendor_decision_endpoint(payload: VendorDecisionInput):
                 "model_confidence": payload.model_confidence,
                 "model_recommendation": payload.model_recommendation,
             })
+
+            # 4. Remove it from the review queue -- the vendor has handled it
+            if payload.request_id:
+                conn.execute(
+                    text("DELETE FROM pending_requests WHERE request_id = :rid"),
+                    {"rid": payload.request_id}
+                )
 
         return VendorDecisionResponse(status="recorded", return_id=return_id)
 
