@@ -18,45 +18,92 @@ Most return/fraud scorers stop at "here's a number." Risk/OS is built around a s
 
 ## Architecture
 
-```
-Order submitted
-      │
-      ▼
-┌─────────────────┐
-│  1. Model        │  XGBoost + AdaBoost ensemble → risk class + confidence
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│  2. History check │  Return rate + prior abuse flags, pulled regardless
-└─────────────────┘     of model confidence
-      │
-      ▼
-  Confident AND clean history?
-      │                    │
-     Yes                   No
-      │                    │
-      ▼                    ▼
-┌──────────────┐   ┌─────────────────────┐
-│ Rule-based    │   │  3. SLM review       │  Groq (openai/gpt-oss-20b) reasons
-│ summary       │   │  over full context    │  over order + retrieved history,
-│ (free, instant)│  └─────────────────────┘  returns rationale + recommendation
-└──────────────┘            │
-      │                     ▼
-      │            Uncertain / escalated → queued for a vendor
-      │                     │
-      ▼                     ▼
-┌─────────────────────────────────┐
-│  4. Vendor decision              │  Human approves/rejects + assigns
-│                                   │  the verified label
-└─────────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────┐
-│  5. Feedback loop                 │  Decision + model's original call
-│                                   │  written back to history — the next
-│                                   │  lookup for this customer sees it
-└─────────────────────────────────┘
+```mermaid
+flowchart TD
+    A(["🛒 Order Submitted"])
+
+    A --> B
+
+    B["🤖 <b>1. MODEL</b><br/><br/>
+    <b>XGBoost + AdaBoost Ensemble</b><br/>
+    Risk Class + Confidence"]
+
+    B --> C
+
+    C["📋 <b>2. HISTORY CHECK</b><br/><br/>
+    Return Rate + Prior Abuse Flags<br/>
+    <i>Retrieved regardless of model confidence</i>"]
+
+    C --> D{"🎯 <b>Confident AND<br/>Clean History?</b>"}
+
+    D -->|✅ YES| E["⚡ <b>RULE-BASED SUMMARY</b><br/><br/>
+    Free • Instant<br/>
+    Fast-path decision"]
+
+    D -->|❌ NO| F["🧠 <b>3. SLM REVIEW</b><br/><br/>
+    Groq • openai/gpt-oss-20b<br/>
+    Reasons over full context<br/>
+    Order + Retrieved History<br/><br/>
+    💬 Rationale + Recommendation"]
+
+    F --> G{"⚠️ <b>Uncertain /<br/>Escalated?</b>"}
+
+    G -->|🚨 YES| H["👨‍💼 <b>QUEUED FOR VENDOR</b><br/><br/>
+    Requires human review"]
+
+    G -->|✅ NO| I
+
+    E --> I
+
+    H --> I
+
+    I["🏢 <b>4. VENDOR DECISION</b><br/><br/>
+    Human Approves / Rejects<br/>
+    + Assigns Verified Label"]
+
+    I --> J["🔄 <b>5. FEEDBACK LOOP</b><br/><br/>
+    Decision + Original Model Call<br/>
+    Written Back to History<br/><br/>
+    <i>Next customer lookup sees<br/>the updated decision</i>"]
+
+    %% ───────────────
+    %% Styling
+    %% ───────────────
+
+    classDef start fill:#0F172A,stroke:#38BDF8,color:#F8FAFC,stroke-width:3px
+
+    classDef model fill:#312E81,stroke:#818CF8,color:#FFFFFF,stroke-width:2px
+
+    classDef history fill:#1E3A8A,stroke:#60A5FA,color:#FFFFFF,stroke-width:2px
+
+    classDef decision fill:#7C2D12,stroke:#FB923C,color:#FFFFFF,stroke-width:3px
+
+    classDef fast fill:#064E3B,stroke:#34D399,color:#ECFDF5,stroke-width:2px
+
+    classDef slm fill:#581C87,stroke:#C084FC,color:#FFFFFF,stroke-width:2px
+
+    classDef escalation fill:#7F1D1D,stroke:#F87171,color:#FFFFFF,stroke-width:2px
+
+    classDef vendor fill:#92400E,stroke:#FBBF24,color:#FFFFFF,stroke-width:2px
+
+    classDef feedback fill:#0C4A6E,stroke:#22D3EE,color:#FFFFFF,stroke-width:3px
+
+    class A start
+    class B model
+    class C history
+    class D,G decision
+    class E fast
+    class F slm
+    class H escalation
+    class I vendor
+    class J feedback
+
+    %% ───────────────
+    %% Link Styling
+    %% ───────────────
+
+    linkStyle default stroke:#64748B,stroke-width:2px
+
 ```
 
 **Defense-only by design:** the system flags, scores, and recommends. It never auto-blocks or auto-approves a return without a human-reviewable path, and it doesn't expose model thresholds or weights that could help someone game the scorer.
