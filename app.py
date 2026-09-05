@@ -57,10 +57,7 @@ app = FastAPI(title="Return-Risk Scorer API", version="1.2")
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        os.environ.get("FRONTEND_URL", ""),  # set this in Render to your Vercel URL
-    ],
+    allow_origins=["*"],  # open for hackathon demo -- frontend/backend on separate platforms
     allow_methods=["*"],
     allow_headers=["*"],
 )
